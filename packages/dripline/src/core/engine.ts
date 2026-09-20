@@ -307,8 +307,8 @@ export class QueryEngine {
           column: colName,
           operator: "BETWEEN",
           value: [
-            extractAstValue(node.lower?.value),
-            extractAstValue(node.upper?.value),
+            extractAstValue(node.lower?.value ?? node.lower),
+            extractAstValue(node.upper?.value ?? node.upper),
           ],
         });
       }
@@ -321,8 +321,8 @@ export class QueryEngine {
       if (colName && keySet.has(colName)) {
         const values = node.children
           .slice(1)
-          .filter((c: any) => c.class === "CONSTANT")
-          .map((c: any) => extractAstValue(c.value));
+          .filter((c: any) => c.class === "CONSTANT" || c.class === "CAST")
+          .map((c: any) => extractAstValue(c.value ?? c));
         if (values.length > 0) {
           quals.push({
             column: colName,
@@ -1196,7 +1196,8 @@ function extractAstValue(v: any): any {
   // exposing it directly as `value`. Unwrap the expression so quals receive
   // the value the user wrote instead of null.
   if (v.class === "CAST" || v.type === "OPERATOR_CAST") {
-    return extractAstValue(v.child?.value ?? v.child);
+    const value = extractAstValue(v.child?.value ?? v.child);
+    return castAstValue(value, v.cast_type?.id);
   }
 
   if (v.is_null) return null;
@@ -1210,6 +1211,28 @@ function extractAstValue(v: any): any {
   }
 
   return v.value;
+}
+
+function castAstValue(value: unknown, targetType?: string): unknown {
+  if (value == null) return null;
+  switch (targetType) {
+    case "DOUBLE":
+    case "FLOAT":
+    case "DECIMAL":
+      return Number(value);
+    case "INTEGER":
+    case "BIGINT":
+    case "SMALLINT":
+    case "TINYINT":
+      return Math.round(Number(value));
+    case "VARCHAR":
+    case "TEXT":
+      return String(value);
+    case "BOOLEAN":
+      return Boolean(value);
+    default:
+      return value;
+  }
 }
 
 /**

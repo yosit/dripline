@@ -107,7 +107,10 @@ describe("QueryEngine", () => {
           tables: [
             {
               name: "points",
-              columns: [{ name: "id", type: "number" }],
+              columns: [
+                { name: "id", type: "number" },
+                { name: "lat", type: "number" },
+              ],
               keyColumns: [{ name: "lat", required: "required" }],
               *list(ctx) {
                 lastCtx = ctx;
@@ -132,7 +135,10 @@ describe("QueryEngine", () => {
           tables: [
             {
               name: "points",
-              columns: [{ name: "id", type: "number" }],
+              columns: [
+                { name: "id", type: "number" },
+                { name: "lat", type: "number" },
+              ],
               keyColumns: [{ name: "lat", required: "required" }],
               *list(ctx) {
                 lastCtx = ctx;
@@ -146,6 +152,66 @@ describe("QueryEngine", () => {
     await engine.query("SELECT * FROM points WHERE lat = CAST(56.642 AS DOUBLE)");
     assert.ok(lastCtx);
     assert.equal(lastCtx.quals[0]?.value, 56.642);
+  });
+
+  it("preserves CAST semantics in BETWEEN and IN quals", async () => {
+    await setup({
+      plugins: [
+        {
+          name: "geo",
+          version: "0.1.0",
+          tables: [
+            {
+              name: "points",
+              columns: [
+                { name: "id", type: "number" },
+                { name: "lat", type: "number" },
+              ],
+              keyColumns: [{ name: "lat", required: "required" }],
+              *list(ctx) {
+                lastCtx = ctx;
+                yield { id: 1 };
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await engine.query("SELECT * FROM points WHERE lat BETWEEN CAST(1.5 AS DOUBLE) AND CAST(2.5 AS DOUBLE)");
+    assert.ok(lastCtx);
+    assert.deepEqual(lastCtx.quals[0]?.value, [1.5, 2.5]);
+
+    await engine.query("SELECT * FROM points WHERE lat IN (CAST(1.5 AS DOUBLE), CAST(2.0 AS DOUBLE))");
+    assert.ok(lastCtx);
+    assert.deepEqual(lastCtx.quals[0]?.value, [1.5, 2]);
+  });
+
+  it("applies integer CAST semantics to qual values", async () => {
+    await setup({
+      plugins: [
+        {
+          name: "geo",
+          version: "0.1.0",
+          tables: [
+            {
+              name: "points",
+              columns: [
+                { name: "id", type: "number" },
+                { name: "lat", type: "number" },
+              ],
+              keyColumns: [{ name: "lat", required: "required" }],
+              *list(ctx) {
+                lastCtx = ctx;
+                yield { id: 1 };
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await engine.query("SELECT * FROM points WHERE lat = CAST(1.9 AS INTEGER)");
+    assert.ok(lastCtx);
+    assert.equal(lastCtx.quals[0]?.value, 2);
   });
 
   it("key column qual with escaped single quotes", async () => {
