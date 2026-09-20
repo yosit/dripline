@@ -98,6 +98,56 @@ describe("QueryEngine", () => {
     assert.equal(lastCtx.quals[0].value, "admin");
   });
 
+  it("preserves DECIMAL scale in numeric key quals", async () => {
+    await setup({
+      plugins: [
+        {
+          name: "geo",
+          version: "0.1.0",
+          tables: [
+            {
+              name: "points",
+              columns: [{ name: "id", type: "number" }],
+              keyColumns: [{ name: "lat", required: "required" }],
+              *list(ctx) {
+                lastCtx = ctx;
+                yield { id: 1, lat: ctx.quals[0]?.value };
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await engine.query("SELECT * FROM points WHERE lat = 32.123");
+    assert.ok(lastCtx);
+    assert.equal(lastCtx.quals[0].value, "32.123");
+  });
+
+  it("extracts values from CAST(... AS DOUBLE) key quals", async () => {
+    await setup({
+      plugins: [
+        {
+          name: "geo",
+          version: "0.1.0",
+          tables: [
+            {
+              name: "points",
+              columns: [{ name: "id", type: "number" }],
+              keyColumns: [{ name: "lat", required: "required" }],
+              *list(ctx) {
+                lastCtx = ctx;
+                yield { id: 1, lat: ctx.quals[0]?.value };
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await engine.query("SELECT * FROM points WHERE lat = CAST(32.123 AS DOUBLE)");
+    assert.ok(lastCtx);
+    assert.equal(lastCtx.quals[0].value, "32.123");
+  });
+
   it("non-key WHERE filtered by DuckDB", async () => {
     await setup();
     const rows = await engine.query("SELECT * FROM users WHERE name = 'Alice'");
