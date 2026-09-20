@@ -98,6 +98,45 @@ describe("QueryEngine", () => {
     assert.equal(lastCtx.quals[0].value, "admin");
   });
 
+  it("does not push down prepared parameter quals", async () => {
+    let captured: QueryContext | null = null;
+    await setup({
+      plugins: [
+        {
+          name: "params",
+          version: "0.1.0",
+          tables: [
+            {
+              name: "points",
+              columns: [{ name: "x", type: "number" }],
+              keyColumns: [{ name: "x", required: "optional" }],
+              *list(ctx) {
+                captured = ctx;
+                yield { x: 39.5696 };
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const rows = await engine.query("SELECT * FROM points WHERE x = ?", [39.5696]);
+    assert.ok(captured);
+    assert.equal(captured.quals.some((q) => q.column === "x"), false);
+    assert.deepEqual(rows, [{ x: 39.5696 }]);
+
+    await engine.query("SELECT * FROM points WHERE x IN (1, ?)", [39.5696]);
+    assert.ok(captured);
+    assert.equal(captured.quals.some((q) => q.column === "x"), false);
+
+    await engine.query("SELECT * FROM points WHERE x = $1", [39.5696]);
+    assert.ok(captured);
+    assert.equal(captured.quals.some((q) => q.column === "x"), false);
+
+    await engine.query("SELECT * FROM points WHERE x BETWEEN ? AND 100", [1]);
+    assert.ok(captured);
+    assert.equal(captured.quals.some((q) => q.column === "x"), false);
+  });
+
   it("key column qual with escaped single quotes", async () => {
     await setup();
     await engine.query(

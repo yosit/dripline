@@ -290,11 +290,10 @@ export class QueryEngine {
       const op = QueryEngine.COMPARISON_MAP[node.type];
       const colName = node.left?.column_names?.at(-1);
       if (op && colName && keySet.has(colName)) {
-        quals.push({
-          column: colName,
-          operator: op,
-          value: extractAstValue(node.right?.value),
-        });
+        const value = extractAstValue(node.right?.value ?? node.right);
+        if (value !== UNRESOLVED_QUAL) {
+          quals.push({ column: colName, operator: op, value });
+        }
       }
       return;
     }
@@ -303,14 +302,15 @@ export class QueryEngine {
     if (node.class === "BETWEEN") {
       const colName = node.input?.column_names?.at(-1);
       if (colName && keySet.has(colName)) {
-        quals.push({
-          column: colName,
-          operator: "BETWEEN",
-          value: [
-            extractAstValue(node.lower?.value),
-            extractAstValue(node.upper?.value),
-          ],
-        });
+        const lower = extractAstValue(node.lower?.value ?? node.lower);
+        const upper = extractAstValue(node.upper?.value ?? node.upper);
+        if (lower !== UNRESOLVED_QUAL && upper !== UNRESOLVED_QUAL) {
+          quals.push({
+            column: colName,
+            operator: "BETWEEN",
+            value: [lower, upper],
+          });
+        }
       }
       return;
     }
@@ -321,9 +321,9 @@ export class QueryEngine {
       if (colName && keySet.has(colName)) {
         const values = node.children
           .slice(1)
-          .filter((c: any) => c.class === "CONSTANT")
-          .map((c: any) => extractAstValue(c.value));
-        if (values.length > 0) {
+          .filter((c: any) => c.class === "CONSTANT" || c.class === "PARAMETER")
+          .map((c: any) => extractAstValue(c.value ?? c));
+        if (values.length > 0 && !values.includes(UNRESOLVED_QUAL)) {
           quals.push({
             column: colName,
             operator: node.type === "COMPARE_IN" ? "IN" : "NOT IN",
@@ -358,11 +358,16 @@ export class QueryEngine {
     ) {
       const colName = node.children?.[0]?.column_names?.at(-1);
       if (colName && keySet.has(colName)) {
-        quals.push({
-          column: colName,
-          operator: QueryEngine.FUNCTION_MAP[node.function_name],
-          value: extractAstValue(node.children?.[1]?.value),
-        });
+        const value = extractAstValue(
+          node.children?.[1]?.value ?? node.children?.[1],
+        );
+        if (value !== UNRESOLVED_QUAL) {
+          quals.push({
+            column: colName,
+            operator: QueryEngine.FUNCTION_MAP[node.function_name],
+            value,
+          });
+        }
       }
       return;
     }
@@ -1189,8 +1194,14 @@ function normalizeQueryLocations(node: any): void {
   }
 }
 
+const UNRESOLVED_QUAL = Symbol("unresolved qual value");
+
 function extractAstValue(v: any): any {
-  if (!v) return null;
+  if (v == null) return UNRESOLVED_QUAL;
+  if (v.class === "PARAMETER" || v.type === "VALUE_PARAMETER") {
+    return UNRESOLVED_QUAL;
+  }
+  if (typeof v !== "object") return v;
   return v.is_null ? null : v.value;
 }
 
