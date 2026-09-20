@@ -98,6 +98,56 @@ describe("QueryEngine", () => {
     assert.equal(lastCtx.quals[0].value, "admin");
   });
 
+  it("preserves DECIMAL scale in key quals", async () => {
+    await setup({
+      plugins: [
+        {
+          name: "geo",
+          version: "0.1.0",
+          tables: [
+            {
+              name: "points",
+              columns: [{ name: "id", type: "number" }],
+              keyColumns: [{ name: "lat", required: "required" }],
+              *list(ctx) {
+                lastCtx = ctx;
+                yield { id: 1 };
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await engine.query("SELECT * FROM points WHERE lat = 56.642");
+    assert.ok(lastCtx);
+    assert.equal(lastCtx.quals[0]?.value, 56.642);
+  });
+
+  it("extracts values from CAST key quals", async () => {
+    await setup({
+      plugins: [
+        {
+          name: "geo",
+          version: "0.1.0",
+          tables: [
+            {
+              name: "points",
+              columns: [{ name: "id", type: "number" }],
+              keyColumns: [{ name: "lat", required: "required" }],
+              *list(ctx) {
+                lastCtx = ctx;
+                yield { id: 1 };
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await engine.query("SELECT * FROM points WHERE lat = CAST(56.642 AS DOUBLE)");
+    assert.ok(lastCtx);
+    assert.equal(lastCtx.quals[0]?.value, 56.642);
+  });
+
   it("key column qual with escaped single quotes", async () => {
     await setup();
     await engine.query(

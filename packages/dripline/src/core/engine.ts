@@ -293,7 +293,7 @@ export class QueryEngine {
         quals.push({
           column: colName,
           operator: op,
-          value: extractAstValue(node.right?.value),
+          value: extractAstValue(node.right?.value ?? node.right),
         });
       }
       return;
@@ -1191,7 +1191,25 @@ function normalizeQueryLocations(node: any): void {
 
 function extractAstValue(v: any): any {
   if (!v) return null;
-  return v.is_null ? null : v.value;
+
+  // CAST expressions wrap their constant in the cast node rather than
+  // exposing it directly as `value`. Unwrap the expression so quals receive
+  // the value the user wrote instead of null.
+  if (v.class === "CAST" || v.type === "OPERATOR_CAST") {
+    return extractAstValue(v.child?.value ?? v.child);
+  }
+
+  if (v.is_null) return null;
+
+  // DuckDB stores DECIMAL constants as an integer mantissa plus a scale.
+  // Reconstruct the decimal before handing it to plugins; returning the raw
+  // mantissa turns 56.642 into 56642.
+  const scale = v.type?.type_info?.scale;
+  if (v.type?.id === "DECIMAL" && typeof v.value === "number" && typeof scale === "number") {
+    return v.value / 10 ** scale;
+  }
+
+  return v.value;
 }
 
 /**
