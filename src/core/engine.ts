@@ -111,7 +111,13 @@ export class QueryEngine {
       const patterns = [
         new RegExp(`${col}\\s*=\\s*'([^']*)'`, "i"),
         new RegExp(`${col}\\s*=\\s*"([^"]*)"`, "i"),
-        new RegExp(`${col}\\s*=\\s*(\\d+)`, "i"),
+        // Keep numeric literals as strings: converting to Number loses DECIMAL scale.
+        new RegExp(`${col}\\s*=\\s*([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)`, "i"),
+        // DuckDB emits explicit casts for parameterized numeric predicates.
+        new RegExp(
+          `${col}\\s*=\\s*CAST\\s*\\(\\s*['"]?([-+]?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?)['"]?\\s+AS\\s+DOUBLE\\s*\\)`,
+          "i",
+        ),
       ];
       for (const p of patterns) {
         const m = sql.match(p);
