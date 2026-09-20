@@ -98,6 +98,36 @@ describe("QueryEngine", () => {
     assert.equal(lastCtx.quals[0].value, "admin");
   });
 
+  it("does not partially push down unresolved compound quals", async () => {
+    await setup();
+
+    await engine.query(
+      "SELECT * FROM users WHERE role IN ('admin', CAST('user' AS VARCHAR))",
+    );
+    assert.ok(lastCtx);
+    assert.equal(lastCtx.quals.some((q) => q.column === "role"), false);
+
+    await engine.query(
+      "SELECT * FROM users WHERE role BETWEEN 'a' AND CAST('z' AS VARCHAR)",
+    );
+    assert.ok(lastCtx);
+    assert.equal(lastCtx.quals.some((q) => q.column === "role"), false);
+
+    await engine.query(
+      "SELECT * FROM users WHERE role = CAST('admin' AS VARCHAR)",
+    );
+    assert.ok(lastCtx);
+    assert.equal(lastCtx.quals.some((q) => q.column === "role"), false);
+
+    await engine.query(
+      "SELECT * FROM users WHERE (role IN ('admin', CAST('user' AS VARCHAR)) OR role IS NULL) AND NOT (role = 'guest')",
+    );
+    assert.ok(lastCtx);
+    assert.equal(lastCtx.quals.length, 2);
+    assert.ok(lastCtx.quals.some((q) => q.operator === "IS NULL"));
+    assert.ok(lastCtx.quals.some((q) => q.operator === "!=" && q.value === "guest"));
+  });
+
   it("key column qual with escaped single quotes", async () => {
     await setup();
     await engine.query(
