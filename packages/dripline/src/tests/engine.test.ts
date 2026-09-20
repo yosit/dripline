@@ -128,6 +128,47 @@ describe("QueryEngine", () => {
     assert.ok(lastCtx.quals.some((q) => q.operator === "!=" && q.value === "guest"));
   });
 
+  it("preserves DECIMAL scale in comparison and compound quals", async () => {
+    const captured: QueryContext[] = [];
+    await setup({
+      plugins: [
+        {
+          name: "decimal",
+          version: "0.1.0",
+          tables: [
+            {
+              name: "coordinates",
+              columns: [
+                { name: "id", type: "number" },
+                { name: "lat", type: "number" },
+              ],
+              keyColumns: [{ name: "lat", required: "optional" }],
+              *list(ctx) {
+                captured.push(ctx);
+                yield { id: 1, lat: 1.5 };
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    await engine.query("SELECT * FROM coordinates WHERE lat = 1.5");
+    assert.equal(captured.at(-1)?.quals[0]?.value, 1.5);
+
+    await engine.query("SELECT * FROM coordinates WHERE lat BETWEEN 1.25 AND 2.75");
+    assert.deepEqual(captured.at(-1)?.quals[0]?.value, [1.25, 2.75]);
+
+    await engine.query("SELECT * FROM coordinates WHERE lat IN (0.1, 0.2)");
+    assert.deepEqual(captured.at(-1)?.quals[0]?.value, [0.1, 0.2]);
+
+    await engine.query("SELECT * FROM coordinates WHERE lat = -4.88");
+    assert.equal(captured.at(-1)?.quals[0]?.value, -4.88);
+
+    await engine.query("SELECT * FROM coordinates WHERE lat = 15");
+    assert.equal(captured.at(-1)?.quals[0]?.value, 15);
+  });
+
   it("key column qual with escaped single quotes", async () => {
     await setup();
     await engine.query(

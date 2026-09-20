@@ -1201,7 +1201,14 @@ function extractAstValue(v: any): any {
     return UNRESOLVED_QUAL;
   }
   if (typeof v !== "object") return v;
-  if ("is_null" in v) return v.is_null ? null : v.value;
+  if ("is_null" in v) {
+    if (v.is_null) return null;
+    if (v.type?.id === "DECIMAL") {
+      const scale = v.type.type_info?.scale ?? 0;
+      return Number(v.value) / 10 ** scale;
+    }
+    return v.value;
+  }
   return UNRESOLVED_QUAL;
 }
 
