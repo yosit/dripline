@@ -38,6 +38,25 @@ describe("createPluginAPI", () => {
     assert.equal(p.tables[0].name, "my_table");
   });
 
+  it("warns when a key column overlaps an output column", () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (message: string) => warnings.push(message);
+    try {
+      const { api } = createPluginAPI("plugin");
+      api.registerTable("near", {
+        columns: [{ name: "target", type: "number" }],
+        keyColumns: [{ name: "target", required: "required" }],
+        *list() {},
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /near.*target/);
+    assert.match(warnings[0], /search input/);
+  });
+
   it("setConnectionSchema sets schema", () => {
     const { api, resolve } = createPluginAPI("t");
     api.setConnectionSchema({

@@ -66,6 +66,14 @@ export function createPluginAPI(pluginId: string): {
       version = v;
     },
     registerTable(tableName: string, def: TableDefinition) {
+      const columnNames = new Set(def.columns.map((column) => column.name));
+      for (const keyColumn of def.keyColumns ?? []) {
+        if (columnNames.has(keyColumn.name)) {
+          api.log.warn(
+            `Table "${tableName}" keyColumn "${keyColumn.name}" overlaps an output column; DuckDB will re-apply matching WHERE clauses to returned rows. Rename the keyColumn if it is a search input rather than a row identity column.`,
+          );
+        }
+      }
       tables.push({ name: tableName, ...def });
     },
     setConnectionSchema(schema: Record<string, SchemaField>) {
