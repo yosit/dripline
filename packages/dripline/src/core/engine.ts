@@ -1195,7 +1195,20 @@ function normalizeQueryLocations(node: any): void {
 
 const UNRESOLVED_QUAL = Symbol("unresolved qual value");
 
+function unwrapCast(node: any): any {
+  while (
+    node?.type === "OPERATOR_CAST" &&
+    node.child &&
+    ["DECIMAL", "DOUBLE", "FLOAT", "REAL"].includes(node.cast_type?.id)
+  ) {
+    node = node.child;
+  }
+  return node;
+}
+
 function extractAstValue(v: any): any {
+  v = unwrapCast(v);
+  if (v?.class === "CONSTANT" && v.value) v = v.value;
   if (v == null) return UNRESOLVED_QUAL;
   if (v.class === "PARAMETER" || v.type === "VALUE_PARAMETER") {
     return UNRESOLVED_QUAL;

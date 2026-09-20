@@ -167,6 +167,11 @@ describe("QueryEngine", () => {
 
     await engine.query("SELECT * FROM coordinates WHERE lat = 15");
     assert.equal(captured.at(-1)?.quals[0]?.value, 15);
+
+    await engine.query(
+      "SELECT * FROM coordinates WHERE lat = CAST(39.5696 AS DOUBLE)",
+    );
+    assert.equal(captured.at(-1)?.quals[0]?.value, 39.5696);
   });
 
   it("key column qual with escaped single quotes", async () => {
