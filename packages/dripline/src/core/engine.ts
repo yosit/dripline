@@ -207,37 +207,37 @@ export class QueryEngine {
     return JSON.parse(result[0].ast as string);
   }
 
-  private extractQualsForTable(
+  private async extractQualsForTable(
     ast: any,
     tableName: string,
     keyColNames: string[],
-  ): Qual[] {
+  ): Promise<Qual[]> {
     const keySet = new Set(keyColNames);
     const quals: Qual[] = [];
 
     // Find all SELECT nodes that reference the target table and collect their WHERE quals
-    const findSelects = (node: any): void => {
+    const findSelects = async (node: any): Promise<void> => {
       if (!node || typeof node !== "object") return;
 
       if (node.type === "SELECT_NODE") {
         const referencesTable = this.selectReferencesTable(node, tableName);
         if (referencesTable && node.where_clause) {
-          this.walkWhere(node.where_clause, keySet, quals);
+          await this.walkWhere(node.where_clause, keySet, quals);
         }
       }
 
       // Recurse into all object/array values to find nested SELECTs (subqueries, CTEs)
       for (const val of Object.values(node)) {
         if (Array.isArray(val)) {
-          for (const item of val) findSelects(item);
+          for (const item of val) await findSelects(item);
         } else if (val && typeof val === "object") {
-          findSelects(val);
+          await findSelects(val);
         }
       }
     };
 
     if (!ast.error && ast.statements?.[0]?.node) {
-      findSelects(ast.statements[0].node);
+      await findSelects(ast.statements[0].node);
     }
     return quals;
   }
@@ -268,20 +268,20 @@ export class QueryEngine {
     "!~~*": "NOT ILIKE",
   };
 
-  private walkWhere(node: any, keySet: Set<string>, quals: Qual[]): void {
+  private async walkWhere(node: any, keySet: Set<string>, quals: Qual[]): Promise<void> {
     if (!node) return;
 
     // AND/OR — recurse into children
     if (node.class === "CONJUNCTION") {
       for (const child of node.children ?? [])
-        this.walkWhere(child, keySet, quals);
+        await this.walkWhere(child, keySet, quals);
       return;
     }
 
     // NOT — recurse into child
     if (node.type === "OPERATOR_NOT") {
       for (const child of node.children ?? [])
-        this.walkWhere(child, keySet, quals);
+        await this.walkWhere(child, keySet, quals);
       return;
     }
 
@@ -293,7 +293,7 @@ export class QueryEngine {
         quals.push({
           column: colName,
           operator: op,
-          value: extractAstValue(node.right?.value ?? node.right),
+          value: await extractAstValue(this.db, node.right?.value ?? node.right),
         });
       }
       return;
@@ -307,8 +307,8 @@ export class QueryEngine {
           column: colName,
           operator: "BETWEEN",
           value: [
-            extractAstValue(node.lower?.value ?? node.lower),
-            extractAstValue(node.upper?.value ?? node.upper),
+            await extractAstValue(this.db, node.lower?.value ?? node.lower),
+            await extractAstValue(this.db, node.upper?.value ?? node.upper),
           ],
         });
       }
@@ -319,10 +319,12 @@ export class QueryEngine {
     if (node.type === "COMPARE_IN" || node.type === "COMPARE_NOT_IN") {
       const colName = node.children?.[0]?.column_names?.at(-1);
       if (colName && keySet.has(colName)) {
-        const values = node.children
-          .slice(1)
-          .filter((c: any) => c.class === "CONSTANT" || c.class === "CAST")
-          .map((c: any) => extractAstValue(c.value ?? c));
+        const values = await Promise.all(
+          node.children
+            .slice(1)
+            .filter((c: any) => c.class === "CONSTANT" || c.class === "CAST")
+            .map((c: any) => extractAstValue(this.db, c.value ?? c)),
+        );
         if (values.length > 0) {
           quals.push({
             column: colName,
@@ -361,7 +363,7 @@ export class QueryEngine {
         quals.push({
           column: colName,
           operator: QueryEngine.FUNCTION_MAP[node.function_name],
-          value: extractAstValue(node.children?.[1]?.value),
+          value: await extractAstValue(this.db, node.children?.[1]?.value),
         });
       }
       return;
@@ -531,7 +533,7 @@ export class QueryEngine {
     const outerTables = referencedTables.filter((t) => !subqueryTables.has(t));
 
     for (const reg of subqueryTables) {
-      const quals = this.extractQualsForTable(
+      const quals = await this.extractQualsForTable(
         ast,
         reg.table.name,
         reg.keyColNames,
@@ -558,7 +560,7 @@ export class QueryEngine {
     const subqueriesResolved = resolvedSql !== sql;
     for (const reg of outerTables) {
       const qualColumns = subqueriesResolved ? reg.allColumns : reg.keyColNames;
-      const quals = this.extractQualsForTable(
+      const quals = await this.extractQualsForTable(
         resolvedAst,
         reg.table.name,
         qualColumns,
@@ -1189,18 +1191,24 @@ function normalizeQueryLocations(node: any): void {
   }
 }
 
-function extractAstValue(v: any): any {
+async function extractAstValue(db: Database, v: any): Promise<any> {
   if (!v) return null;
-
-  // CAST expressions wrap their constant in the cast node rather than
-  // exposing it directly as `value`. Unwrap the expression so quals receive
-  // the value the user wrote instead of null.
-  if (v.class === "CAST" || v.type === "OPERATOR_CAST") {
-    const value = extractAstValue(v.child?.value ?? v.child);
-    return castAstValue(value, v.cast_type?.id);
-  }
-
   if (v.is_null) return null;
+
+  // DuckDB represents CAST as an expression node whose child contains the
+  // constant. Evaluate the complete cast in DuckDB rather than reproducing
+  // its rounding and coercion rules in JavaScript.
+  if (v.class === "CAST" || v.type === "OPERATOR_CAST") {
+    const targetType = v.cast_type?.id;
+    if (!CAST_TYPES.has(targetType)) return null;
+    const value = await extractAstValue(db, v.child?.value ?? v.child);
+    if (value === null) return null;
+    const rows = await db.all(
+      `SELECT CAST(? AS ${targetType}) AS value`,
+      value,
+    );
+    return rows[0]?.value ?? null;
+  }
 
   // DuckDB stores DECIMAL constants as an integer mantissa plus a scale.
   // Reconstruct the decimal before handing it to plugins; returning the raw
@@ -1213,27 +1221,17 @@ function extractAstValue(v: any): any {
   return v.value;
 }
 
-function castAstValue(value: unknown, targetType?: string): unknown {
-  if (value == null) return null;
-  switch (targetType) {
-    case "DOUBLE":
-    case "FLOAT":
-    case "DECIMAL":
-      return Number(value);
-    case "INTEGER":
-    case "BIGINT":
-    case "SMALLINT":
-    case "TINYINT":
-      return Math.round(Number(value));
-    case "VARCHAR":
-    case "TEXT":
-      return String(value);
-    case "BOOLEAN":
-      return Boolean(value);
-    default:
-      return value;
-  }
-}
+const CAST_TYPES = new Set([
+  "BIGINT",
+  "BOOLEAN",
+  "DECIMAL",
+  "DOUBLE",
+  "FLOAT",
+  "INTEGER",
+  "SMALLINT",
+  "TINYINT",
+  "VARCHAR",
+]);
 
 /**
  * Push one cell into an open appender. Dispatches on the engine-level
